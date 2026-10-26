@@ -7,6 +7,14 @@
 // tests pass while the challenge page crashed on a real server.
 declare(strict_types=1);
 
+namespace {
+	// The app is deployed as a git clone, so this file is reachable over HTTP.
+	if (PHP_SAPI !== 'cli') {
+		http_response_code(404);
+		exit;
+	}
+}
+
 namespace Psr\Log {
 	interface LoggerInterface {
 		public function emergency(string|\Stringable $message, array $context = []): void;
@@ -18,6 +26,12 @@ namespace Psr\Log {
 		public function info(string|\Stringable $message, array $context = []): void;
 		public function debug(string|\Stringable $message, array $context = []): void;
 		public function log($level, string|\Stringable $message, array $context = []): void;
+	}
+}
+
+namespace Psr\Clock {
+	interface ClockInterface {
+		public function now(): \DateTimeImmutable;
 	}
 }
 
@@ -104,8 +118,26 @@ namespace OCP\Template {
 	}
 }
 
+namespace OCP\AppFramework\Utility {
+	interface ITimeFactory extends \Psr\Clock\ClockInterface {
+		public function getTime(): int;
+		public function getDateTime(string $time = 'now', ?\DateTimeZone $timezone = null): \DateTime;
+		public function withTimeZone(\DateTimeZone $timezone): static;
+		public function getTimeZone(?string $timezone = null): \DateTimeZone;
+	}
+}
+
 namespace OCP\AppFramework\Http {
-	class TemplateResponse {
+	abstract class Response {
+	}
+	class RedirectResponse extends Response {
+		public function __construct(private string $redirectURL, public int $status = 303, public array $headers = []) {
+		}
+		public function getRedirectURL(): string {
+			return $this->redirectURL;
+		}
+	}
+	class TemplateResponse extends Response {
 		public const RENDER_AS_GUEST = 'guest';
 		public const RENDER_AS_BLANK = '';
 		public const RENDER_AS_BASE = 'base';
@@ -129,6 +161,18 @@ namespace OCP\AppFramework\Http\Attribute {
 	#[\Attribute(\Attribute::TARGET_METHOD)] class NoCSRFRequired {}
 	#[\Attribute(\Attribute::TARGET_METHOD)] class UseSession {}
 	#[\Attribute(\Attribute::TARGET_METHOD)] class NoTwoFactorRequired {}
+	abstract class ARateLimit {
+		public function __construct(protected int $limit, protected int $period) {
+		}
+		public function getLimit(): int {
+			return $this->limit;
+		}
+		public function getPeriod(): int {
+			return $this->period;
+		}
+	}
+	#[\Attribute(\Attribute::TARGET_METHOD)] class AnonRateLimit extends ARateLimit {}
+	#[\Attribute(\Attribute::TARGET_METHOD)] class UserRateLimit extends ARateLimit {}
 }
 
 namespace OCP\AppFramework {

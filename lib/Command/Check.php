@@ -81,7 +81,7 @@ class Check extends Command {
 		return Command::SUCCESS;
 	}
 
-	private function checkConfig(mixed $config): void {
+	private function checkConfig(#[\SensitiveParameter] mixed $config): void {
 		if ($config === null) {
 			$this->fail('Not configured. Add the \'' . DuoProvider::APP_ID . '\' array to config.php (see README).');
 			return;
@@ -183,7 +183,7 @@ class Check extends Command {
 		}
 	}
 
-	private function checkDuo(array $config): void {
+	private function checkDuo(#[\SensitiveParameter] array $config): void {
 		if (!is_readable(Web::DUO_CERTS)) {
 			$this->fail('CA bundle ' . Web::DUO_CERTS . ' is missing or unreadable.');
 			return;
@@ -239,12 +239,12 @@ class Check extends Command {
 		$more = count($disabled) > self::LIST_LIMIT ? sprintf(' and %d more', count($disabled) - self::LIST_LIMIT) : '';
 		$this->warn(sprintf('%d user(s) have Duo stored as disabled and will NOT be asked for Duo: %s%s.',
 			count($disabled), $shown, $more));
-		$this->output->writeln('         Fix the config, then run: occ twofactor_duo:check --reset-states');
+		$this->output->writeln('         If they should use Duo: occ twofactor_duo:check --reset-states (re-evaluates ALL users at their next login)');
 	}
 
 	private function resetStates(bool $valid): void {
 		if (!$valid || $this->errors > 0) {
-			$this->fail('Not resetting: fix the errors above first, or the states would be stored as disabled again.');
+			$this->fail('Not resetting: fix the errors above first. With a broken configuration nobody could pass Duo.');
 			return;
 		}
 		$this->registry->cleanUp(DuoProvider::PROVIDER_ID);

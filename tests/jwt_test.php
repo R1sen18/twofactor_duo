@@ -33,6 +33,10 @@ $cases = [
 	'expired 2 minutes ago' => [$sign($header, ['exp' => time() - 120] + $claims, $secret), false],
 	'expires in 30 s (inside the leeway)' => [$sign($header, ['exp' => time() + 30] + $claims, $secret), true],
 	'without exp' => [$sign($header, array_diff_key($claims, ['exp' => 1]), $secret), false],
+	'exp is not a number' => [$sign($header, ['exp' => 'never'] + $claims, $secret), false],
+	'iat 10 minutes in the future' => [$sign($header, ['iat' => time() + 600] + $claims, $secret), false],
+	'nbf 10 minutes in the future' => [$sign($header, ['nbf' => time() + 600] + $claims, $secret), false],
+	'iat 30 s in the future (inside the leeway)' => [$sign($header, ['iat' => time() + 30] + $claims, $secret), true],
 	'alg=none with empty signature' => [$b64u(json_encode(['alg' => 'none'])) . ".$goodPayload.", false],
 	'alg=HS256 header (signed with HS512)' => [$sign(['alg' => 'HS256', 'typ' => 'JWT'], $claims, $secret), false],
 	'not a JWT' => ['not-a-jwt', false],
@@ -41,7 +45,12 @@ $cases = [
 section('Web::val_duo()');
 expect('test token really contains - or _ in its payload', strpbrk($goodPayload, '-_') !== false);
 foreach ($cases as $name => [$token, $shouldAccept]) {
-	$result = $valDuo->invoke($web, $token, $secret);
+	try {
+		$result = $valDuo->invoke($web, $token, $secret);
+	} catch (Throwable $e) {
+		expect($name . ': ' . ($shouldAccept ? 'accepted' : 'rejected'), false, 'threw ' . get_class($e) . ': ' . $e->getMessage());
+		continue;
+	}
 	$accepted = is_array($result) && ($result['preferred_username'] ?? null) === 'robin'
 		&& ($result['auth_result']['result'] ?? null) === 'allow';
 	expect($name . ': ' . ($shouldAccept ? 'accepted' : 'rejected'), $accepted === $shouldAccept);

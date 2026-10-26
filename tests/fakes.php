@@ -2,6 +2,12 @@
 // In-memory implementations of the Nextcloud services the app depends on.
 declare(strict_types=1);
 
+// The app is deployed as a git clone, so this file is reachable over HTTP.
+if (PHP_SAPI !== 'cli') {
+	http_response_code(404);
+	exit;
+}
+
 use OCP\Authentication\TwoFactorAuth\IProvider;
 use OCP\Authentication\TwoFactorAuth\IRegistry;
 
@@ -132,6 +138,27 @@ class FakeLogger implements Psr\Log\LoggerInterface {
 	}
 	public function last(): string {
 		return $this->lines === [] ? '' : $this->lines[array_key_last($this->lines)];
+	}
+}
+
+/** Clock the test sets explicitly. */
+class FakeTimeFactory implements OCP\AppFramework\Utility\ITimeFactory {
+	public function __construct(public int $time = 1_800_000_000) {
+	}
+	public function getTime(): int {
+		return $this->time;
+	}
+	public function now(): \DateTimeImmutable {
+		return (new \DateTimeImmutable())->setTimestamp($this->time);
+	}
+	public function getDateTime(string $time = 'now', ?\DateTimeZone $timezone = null): \DateTime {
+		return (new \DateTime())->setTimestamp($this->time);
+	}
+	public function withTimeZone(\DateTimeZone $timezone): static {
+		return $this;
+	}
+	public function getTimeZone(?string $timezone = null): \DateTimeZone {
+		return new \DateTimeZone($timezone ?? 'UTC');
 	}
 }
 

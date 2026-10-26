@@ -14,17 +14,18 @@ on:
 permissions:
   contents: read
 
+# Actions are pinned to commit SHAs; tags can be moved to other code. The comment names the release.
 jobs:
   test:
     name: PHP 8.4
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: shivammathur/setup-php@v2
+      - uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
         with:
           php-version: "8.4"
-          extensions: curl
+          extensions: curl, mbstring
           coverage: none
 
       - name: Lint
@@ -32,3 +33,12 @@ jobs:
 
       - name: Tests
         run: php tests/run.php ${{ inputs.online && '--online' || '' }}
+
+  apache:
+    name: Apache + Nextcloud .htaccess
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: .git, .github and tests are not served; the callback still works
+        run: bash tests/apache/check.sh

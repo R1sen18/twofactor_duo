@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace OCA\TwoFactorDuo\Provider;
 
 use OCA\TwoFactorDuo\Web;
+use OCP\AppFramework\Utility\ITimeFactory;
 use OCP\Authentication\TwoFactorAuth\IProvider;
 use OCP\IConfig;
 use OCP\ISession;
@@ -23,20 +24,25 @@ class DuoProvider implements IProvider {
 	public const PROVIDER_ID = 'duo';
 	/** OAuth state of the Duo prompt we started, checked in the callback. */
 	public const SESSION_STATE = 'twofactor_duo_state';
-	/** UID that successfully passed Duo, set by the callback. */
+	/** OIDC nonce of that prompt; must come back inside Duo's signed id_token. */
+	public const SESSION_NONCE = 'twofactor_duo_nonce';
+	/** ['uid' => …, 'time' => …] of a login Duo approved, set by the callback. */
 	public const SESSION_RESULT = 'twofactor_duo_result';
 	/** Set when the last attempt failed, so the next challenge page doesn't start a new prompt by itself. */
 	public const SESSION_FAILED = 'twofactor_duo_failed';
+	/** Seconds an approval stays usable; the callback page submits it right away. */
+	public const RESULT_TTL = 120;
 
 	public function __construct(
 		private IConfig $config,
 		private ISession $session,
 		private ITemplateManager $templateManager,
 		private LoggerInterface $logger,
+		private ITimeFactory $timeFactory,
 	) {
 	}
 
-	public static function isValidConfig(mixed $config): bool {
+	public static function isValidConfig(#[\SensitiveParameter] mixed $config): bool {
 		if (!is_array($config)) {
 			return false;
 		}
@@ -71,8 +77,13 @@ class DuoProvider implements IProvider {
 		$tmpl->assign('error', '');
 		$tmpl->assign('notice', '');
 
+		// A new prompt invalidates any approval from an earlier one that was never submitted.
+		$this->session->remove(self::SESSION_RESULT);
+
 		$config = $this->getConfig();
 		if ($config === null) {
+			$this->logger->error('Duo is enabled but its configuration is missing or incomplete; nobody can pass Duo.'
+				. ' Run occ twofactor_duo:check.', ['app' => self::APP_ID]);
 			$tmpl->assign('error', 'Duo is not configured on this server.');
 			return $tmpl;
 		}
@@ -102,8 +113,10 @@ class DuoProvider implements IProvider {
 		}
 
 		$state = $web->rand_str();
+		$nonce = $web->rand_str(64);
 		$this->session->set(self::SESSION_STATE, $state);
-		$tmpl->assign('duo_url', $web->auth($user->getUID(), $state));
+		$this->session->set(self::SESSION_NONCE, $nonce);
+		$tmpl->assign('duo_url', $web->auth($user->getUID(), $state, $nonce));
 		if ($failed || $unfinished) {
 			$tmpl->assign('notice', 'The Duo sign-in was not completed. Try again, or contact your administrator if this keeps happening.');
 		} else {
@@ -116,18 +129,30 @@ class DuoProvider implements IProvider {
 		// The real verification happened in CallbackController; $challenge is unused.
 		$result = $this->session->get(self::SESSION_RESULT);
 		$this->session->remove(self::SESSION_RESULT);
-		$passed = is_string($result) && hash_equals($user->getUID(), $result);
+
+		$age = is_array($result) && is_int($result['time'] ?? null) ? $this->timeFactory->getTime() - $result['time'] : null;
+		$passed = $age !== null && $age >= 0 && $age <= self::RESULT_TTL
+			&& is_string($result['uid'] ?? null) && hash_equals($user->getUID(), $result['uid']);
 		if (!$passed) {
 			$this->session->set(self::SESSION_FAILED, true);
+			if ($age !== null && $age > self::RESULT_TTL) {
+				$this->logger->warning('Rejected a Duo approval for {uid} that was {age} s old (limit {ttl} s)',
+					['app' => self::APP_ID, 'uid' => $user->getUID(), 'age' => $age, 'ttl' => self::RESULT_TTL]);
+			}
 		}
 		return $passed;
 	}
 
-	protected function createWeb(array $config): Web {
+	protected function createWeb(#[\SensitiveParameter] array $config): Web {
 		return new Web($config['IKEY'], $config['SKEY'], $config['HOST'], $config['CALL']);
 	}
 
+	/**
+	 * Always true, even when the configuration is broken (fail closed). Core asks this only once per
+	 * user and stores the answer forever, so returning false for a broken config would exempt every
+	 * user who logs in meanwhile from Duo permanently. getTemplate() blocks the login instead.
+	 */
 	public function isTwoFactorAuthEnabledForUser(IUser $user): bool {
-		return $this->getConfig() !== null;
+		return true;
 	}
 }

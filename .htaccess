@@ -1,0 +1,9 @@
+# This app is usually deployed as a git clone, and Nextcloud's own .htaccess only blocks
+# folders like .git and tests at the web root. Keep this app's repository, CI and test files
+# off the web as well.
+#
+# Only mod_alias here: rewrite directives in this file would replace Nextcloud's
+# front-controller rules for this folder and break /apps/twofactor_duo/callback.
+<IfModule mod_alias.c>
+  RedirectMatch 404 /(\.git|\.github|tests)(/|$)
+</IfModule>
