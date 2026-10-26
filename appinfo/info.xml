@@ -4,8 +4,8 @@
 	<id>twofactor_duo</id>
 	<name>Duo Universal Prompt</name>
 	<summary>two-factor DUO</summary>
-	<description>Duo Universal Prompt</description>
-	<version>1.0.01</version>
+	<description>Two-factor authentication with the Duo Universal Prompt (Duo Web SDK v4). No Nextcloud core patches required.</description>
+	<version>2.0.0</version>
 	<licence>agpl</licence>
 	<author>Muhammad Ardyansyah</author>
 	<namespace>TwoFactorDuo</namespace>
@@ -17,7 +17,8 @@
 	<repository type="git">https://github.com/tilyanPristka/twofactor_duo.git</repository>
 	
 	<dependencies>
-		<nextcloud min-version="20" max-version="99"/>
+		<php min-version="8.1"/>
+		<nextcloud min-version="32" max-version="35"/>
 	</dependencies>
 	<two-factor-providers>
 		<provider>OCA\TwoFactorDuo\Provider\DuoProvider</provider>

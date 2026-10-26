@@ -1,0 +1,25 @@
+# Dependencies / build output
+/vendor/
+/node_modules/
+/build/
+
+# Tooling caches
+.phpunit.result.cache
+.php-cs-fixer.cache
+.phpunit.cache/
+
+# Local config and secrets (Duo keys belong in Nextcloud's config.php)
+.env
+*.local.php
+config.php
+
+# Editors / IDEs
+.idea/
+.vscode/
+*.swp
+*~
+
+# OS / sync clutter
+.DS_Store
+Thumbs.db
+desktop.ini

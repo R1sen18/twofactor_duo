@@ -1,4 +1,7 @@
 <?php
+
+declare(strict_types=1);
+
 namespace OCA\TwoFactorDuo;
 
 class Web {
@@ -7,8 +10,8 @@ class Web {
   public $duo_host;
   public $callback;
   
-  const DUO_CERTS     = "apps/twofactor_duo/lib/duo_certs.pem";
-  const URL_TOKEN     = "/oauth/v1/token";
+  const DUO_CERTS     = __DIR__ . "/duo_certs.pem";
+  const URL_TOKEN    = "/oauth/v1/token";
   const URL_HEALTH    = "/oauth/v1/health_check";
   const URL_AUTHORIZE = "/oauth/v1/authorize";
   const LEEWAY        = 60;
@@ -39,28 +42,26 @@ class Web {
     return implode('.', $segments);
 	}
   private function val_duo($token, $sec) {
-    global $fn;
-    $tokenParts = explode('.', $token);
-    $header = base64_decode($tokenParts[0]);
-    $payload = base64_decode($tokenParts[1]);
-    $signatureProvided = $tokenParts[2];
+    if(!is_string($token) || substr_count($token, '.') !== 2) return null;
+    [$base64UrlHeader, $base64UrlPayload, $signatureProvided] = explode('.', $token);
 
-    $base64UrlHeader = $this->base64UrlEncode($header);
-    $base64UrlPayload = $this->base64UrlEncode($payload);
+    // Sign the segments exactly as received; re-encoding decoded data is lossy.
     $signature = hash_hmac('SHA512', $base64UrlHeader . "." . $base64UrlPayload, $sec, true);
-    $base64UrlSignature = $this->base64UrlEncode($signature);
-    
-    $signatureValid = ($base64UrlSignature === $signatureProvided);
-    $payloadData = json_decode($payload, true);
-    $currentTime = time() + self::LEEWAY;
-    if(isset($payloadData['exp']) && $payloadData['exp'] < $currentTime){
+    if(!hash_equals($this->base64UrlEncode($signature), $signatureProvided)) return null;
+
+    $header = json_decode((string)base64_decode(strtr($base64UrlHeader, '-_', '+/')), true);
+    if(!is_array($header) || ($header['alg'] ?? '') !== 'HS512') return null;
+
+    $payloadData = json_decode((string)base64_decode(strtr($base64UrlPayload, '-_', '+/')), true);
+    if(!is_array($payloadData)) return null;
+    if(!isset($payloadData['exp']) || $payloadData['exp'] + self::LEEWAY < time()){
       return null;
     }
-    return $signatureValid ? $payloadData : null;
+    return $payloadData;
   }
   private function base64UrlEncode($text, $mode=true){
     if($mode) return str_replace(['+', '/', '='], ['-', '_', ''], base64_encode($text));
-    else return str_replace('=', '', strtr(base64_encode($input), '+/', '-_'));
+    else return str_replace('=', '', strtr(base64_encode($text), '+/', '-_'));
   }
   
   private function curl_duo_v4($endpoint, $request, $user_agent=null){
@@ -77,6 +78,7 @@ class Web {
     }
     $res = curl_exec($ch);
     curl_close($ch);
+    if(!is_string($res)) return null;
     return json_decode($res, true);
   }
   private function jwt_payload($audience){
@@ -86,7 +88,7 @@ class Web {
                 "iat" => $current_date, "exp" => $current_date + 300];
     return $this->gen_duo($payload, $this->duo_skey);
   }
-  private function rand_str($state_length=36){
+  public function rand_str($state_length=36){
     $ALPHANUMERICS = array_merge(range('A', 'Z'), range('a', 'z'), range(0, 9));
     $state = "";
     for($i = 0; $i < $state_length; ++$i) {
@@ -145,22 +147,24 @@ class Web {
   }
   public function decode($duoCode, $username){
     $res = $this->get_result($duoCode, $username);
-    
+
+    if(!is_array($res)) return ['err_msg' => "No response from Duo."];
     if(isset($res['error'])) return $res;
     else {
       $err_msg = "null";
       $required_keys = ["id_token", "access_token", "expires_in", "token_type"];
       foreach($required_keys as $key) {
         if(!isset($res[$key])) {
-          $err_msg = "Result missing expected data.";
+          return ['err_msg' => "Result missing expected data."];
         }
       }
       if($res["token_type"] !== "Bearer"){
         $err_msg = "Result missing expected data.";
       }
-      
+
       $token = $this->val_duo($res['id_token'], $this->duo_skey);
-      
+      if(!is_array($token)) return ['err_msg' => "Invalid or expired id_token."];
+
       $required_token_key = ["exp", "iat", "iss", "aud"];
       foreach($required_token_key as $key) {
         if(!isset($token[$key])) {
