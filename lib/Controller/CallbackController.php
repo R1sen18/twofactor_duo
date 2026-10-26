@@ -8,6 +8,7 @@ use OCA\TwoFactorDuo\Provider\DuoProvider;
 use OCA\TwoFactorDuo\Web;
 use OCP\AppFramework\Controller;
 use OCP\AppFramework\Http\Attribute\NoCSRFRequired;
+use OCP\AppFramework\Http\Attribute\NoTwoFactorRequired;
 use OCP\AppFramework\Http\Attribute\PublicPage;
 use OCP\AppFramework\Http\Attribute\UseSession;
 use OCP\AppFramework\Http\TemplateResponse;
@@ -21,7 +22,8 @@ use OCP\Util;
  * Receives the redirect back from Duo's Universal Prompt.
  *
  * The user is still in the "pending 2FA" state here, so the route must be a
- * public page. We verify the Duo code against the pending user, store the
+ * public page and exempt from core's TwoFactorMiddleware, which otherwise
+ * redirects every non-challenge controller back to the challenge page. We verify the Duo code against the pending user, store the
  * outcome in the session, and then hand control back to core by POSTing to
  * the regular /login/challenge/duo endpoint, which calls
  * DuoProvider::verifyChallenge().
@@ -40,8 +42,13 @@ class CallbackController extends Controller {
 		parent::__construct($appName, $request);
 	}
 
+	/**
+	 * Annotation for Nextcloud < 34, which doesn't have the attribute yet:
+	 * @NoTwoFactorRequired
+	 */
 	#[PublicPage]
 	#[NoCSRFRequired]
+	#[NoTwoFactorRequired]
 	#[UseSession]
 	public function index(): TemplateResponse {
 		$duoCode = (string)$this->request->getParam('duo_code', '');
