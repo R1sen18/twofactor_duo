@@ -9,8 +9,12 @@ set -euo pipefail
 APP_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 PORT=8089
 BASE="http://127.0.0.1:$PORT"
-ROOT="$(mktemp -d)"
+# Not under /tmp: Ubuntu runs Apache with PrivateTmp, so it wouldn't see that folder.
+ROOT=/var/www/nc-test
 FAILURES=0
+sudo rm -rf "$ROOT"
+sudo mkdir -p "$ROOT"
+sudo chown "$(id -u):$(id -g)" "$ROOT"
 
 # --- web root that looks like a Nextcloud install -------------------------------------------
 mkdir -p "$ROOT/apps"
@@ -115,5 +119,10 @@ else
 fi
 
 echo
-if [ "$FAILURES" -gt 0 ]; then echo "$FAILURES check(s) FAILED"; exit 1; fi
+if [ "$FAILURES" -gt 0 ]; then
+  echo "$FAILURES check(s) FAILED"
+  echo "--- Apache error log ---"
+  sudo tail -n 30 /var/log/apache2/error.log || true
+  exit 1
+fi
 echo "all checks passed"
