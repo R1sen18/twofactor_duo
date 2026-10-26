@@ -17,11 +17,13 @@ This is a reworked fork of [tilyanPristka/twofactor_duo](https://github.com/tily
    git clone <this-repo-url> twofactor_duo
    chown -R www-data:www-data twofactor_duo
    ```
-2. Add the configuration below to `config/config.php`.
-3. Enable the app:
+2. Add the configuration below to `config/config.php`. Do this **before** enabling the app (see [Stored user states](#stored-user-states)).
+3. Enable the app and check the setup right away:
    ```bash
    sudo -u www-data php occ app:enable twofactor_duo
+   sudo -u www-data php occ twofactor_duo:check
    ```
+   If the check reports errors, fix them, or run `occ app:disable twofactor_duo` until you can. `occ` keeps working even if web logins fail.
 
 ## Configuration
 In the [Duo Admin Panel](https://admin.duosecurity.com), protect a new **Web SDK** application and copy its Client ID, Client secret and API hostname.
@@ -40,6 +42,27 @@ In the [Duo Admin Panel](https://admin.duosecurity.com), protect a new **Web SDK
 - Once all four values are set, the provider is active for **every user**. If any value is missing, the provider stays disabled.
 - Keep the Client secret out of version control. `config.php` is the right place for it.
 
+## Checking the configuration
+```bash
+sudo -u www-data php occ twofactor_duo:check
+```
+The command checks:
+- **Configuration:** all four values are present, plausible and free of stray whitespace. `HOST` must not contain `https://`. Leftover keys such as `AKEY` from the old Web SDK v2 app are reported.
+- **Callback URL:** `CALL` ends in `/apps/twofactor_duo/callback`, matches `overwrite.cli.url`, and its host is in `trusted_domains`. Otherwise Nextcloud would reject Duo's redirect.
+- **Duo API:** runs Duo's health check, which only passes if Duo accepts `IKEY`, `SKEY` and `HOST` together. Failures show Duo's own error (e.g. `invalid_client`) or the network error (DNS, TLS, timeout). Skip this part with `--offline`.
+- **User states:** lists users for whom Nextcloud has stored Duo as disabled (see below).
+
+The exit code is `0` when there are no errors (warnings are allowed) and `1` otherwise, so you can use it in scripts and monitoring. `occ` only loads commands of enabled apps, so the command is available once the app is enabled.
+
+## Stored user states
+Nextcloud asks a 2FA provider only **once per user** whether it is enabled, at their first login after the app is enabled, and then stores the answer. If someone logs in while the configuration is missing or incomplete, Duo is stored as *disabled* for them. They will then **not** be asked for Duo, even after the configuration is fixed.
+
+`occ twofactor_duo:check` lists these users. After fixing the configuration, clear the stored states:
+```bash
+sudo -u www-data php occ twofactor_duo:check --reset-states
+```
+Every user is then re-evaluated at their next login and gets Duo. The command refuses to reset while the check still finds errors.
+
 ## How it works
 1. After the password step, the challenge page sends the browser to the Duo Universal Prompt. It stores a random OAuth `state` in the session first.
 2. Duo redirects back to `/apps/twofactor_duo/callback`. The app owns this route, so core doesn't need patching. The callback:
@@ -50,8 +73,11 @@ In the [Duo Admin Panel](https://admin.duosecurity.com), protect a new **Web SDK
 
 Nextcloud's brute-force protection and rate limits on the challenge endpoint still apply.
 
-## Upgrading from 1.x
+## Upgrading from 1.x or an older Duo app
 - Change `CALL` from `…/login/callback/duo` to `…/apps/twofactor_duo/callback`.
+- Remove `AKEY` if you have it. It belonged to the old Duo Web SDK v2 (iframe) app and isn't used anymore. `IKEY`, `SKEY` and `HOST` stay the same.
+- Replace the old app folder. Don't install this one next to it: both use the folder and app ID `twofactor_duo`.
+- Run `occ twofactor_duo:check`. Older Duo apps used the same provider ID `duo`, so their stored per-user states still apply. If users are listed as disabled, run it again with `--reset-states`.
 - Remove the 1.x edits to `core/routes.php`, `IProvider.php`, `Manager.php` and `BackupCodesProvider.php`. Reinstalling or upgrading Nextcloud restores the original files. On Nextcloud 32+, those patches no longer apply anyway.
 
 ## Changes compared to 1.x
@@ -60,7 +86,8 @@ Nextcloud's brute-force protection and rate limits on the challenge endpoint sti
 - **JWT validation fix:** 1.x ran plain `base64_decode()` on base64url segments. That dropped `-` and `_` characters, so genuine Duo tokens were rejected. The signature is now computed over the segments exactly as received and compared in constant time. `alg` must be `HS512`.
 - **Leeway fix:** 1.x rejected tokens during their last 60 seconds of validity. They are now accepted until 60 seconds after `exp`.
 - **OAuth `state` is now checked.** 1.x ignored it.
-- **Fails closed:** network errors and incomplete Duo responses now reject the login instead of throwing PHP errors.
+- **Fails closed:** network errors and incomplete Duo responses now reject the login instead of throwing PHP errors. Requests to Duo time out after 20 seconds instead of hanging.
+- New `occ twofactor_duo:check` command (see [Checking the configuration](#checking-the-configuration)).
 - The certificate bundle is found by absolute path, so the app works from custom app directories.
 - The Duo redirect works without inline scripts, so Nextcloud's default CSP stays intact.
 

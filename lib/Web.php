@@ -9,8 +9,10 @@ class Web {
 	public $duo_skey;
   public $duo_host;
   public $callback;
-  
-  const DUO_CERTS     = __DIR__ . "/duo_certs.pem";
+  /** cURL error of the last failed request to Duo, for diagnostics. */
+  public $last_error = null;
+
+  const DUO_CERTS    = __DIR__ . "/duo_certs.pem";
   const URL_TOKEN    = "/oauth/v1/token";
   const URL_HEALTH    = "/oauth/v1/health_check";
   const URL_AUTHORIZE = "/oauth/v1/authorize";
@@ -22,15 +24,6 @@ class Web {
 		$this->duo_host = $host;
 		$this->callback = $call;
 	}
-	public function duo_auth($username){
-    $check = $this->check();
-    if($check['stat'] == 'OK'){
-      $duo_link = $this->auth($username);
-      header('Location: '.$duo_link);
-      exit();
-    }
-  }
-	
   private function gen_duo($payload, $sec){
     $segments = [];
     $header = array('alg'=>'HS512','typ'=>'JWT');
@@ -73,10 +66,13 @@ class Web {
     curl_setopt($ch, CURLOPT_CAINFO, self::DUO_CERTS);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 20);
     if($user_agent !== null) {
       curl_setopt($ch, CURLOPT_USERAGENT, $user_agent);
     }
     $res = curl_exec($ch);
+    $this->last_error = is_string($res) ? null : curl_error($ch);
     curl_close($ch);
     if(!is_string($res)) return null;
     return json_decode($res, true);
