@@ -12,6 +12,7 @@ use OCP\IUser;
 use OCP\Template\ITemplate;
 use OCP\Template\ITemplateManager;
 use OCP\Util;
+use Psr\Log\LoggerInterface;
 
 /**
  * No custom CSP needed: the challenge page sends the browser to Duo with a
@@ -24,11 +25,14 @@ class DuoProvider implements IProvider {
 	public const SESSION_STATE = 'twofactor_duo_state';
 	/** UID that successfully passed Duo, set by the callback. */
 	public const SESSION_RESULT = 'twofactor_duo_result';
+	/** Set when the last attempt failed, so the next challenge page doesn't start a new prompt by itself. */
+	public const SESSION_FAILED = 'twofactor_duo_failed';
 
 	public function __construct(
 		private IConfig $config,
 		private ISession $session,
 		private ITemplateManager $templateManager,
+		private LoggerInterface $logger,
 	) {
 	}
 
@@ -65,6 +69,7 @@ class DuoProvider implements IProvider {
 		$tmpl = $this->templateManager->getTemplate(self::APP_ID, 'challenge');
 		$tmpl->assign('duo_url', '');
 		$tmpl->assign('error', '');
+		$tmpl->assign('notice', '');
 
 		$config = $this->getConfig();
 		if ($config === null) {
@@ -72,9 +77,26 @@ class DuoProvider implements IProvider {
 			return $tmpl;
 		}
 
-		$web = new Web($config['IKEY'], $config['SKEY'], $config['HOST'], $config['CALL']);
+		// A failed attempt, or a prompt whose callback never arrived, must not start the next prompt
+		// automatically: that sends endless pushes to the user's phone.
+		$failed = $this->session->get(self::SESSION_FAILED) === true;
+		$unfinished = $this->session->get(self::SESSION_STATE) !== null;
+		$this->session->remove(self::SESSION_FAILED);
+		if ($unfinished && !$failed) {
+			$this->logger->warning('The previous Duo prompt for {uid} was not completed: the user went back, or Duo\'s redirect'
+				. ' to the CALL URL never reached the app. If this happens on every login, check CALL with occ twofactor_duo:check.',
+				['app' => self::APP_ID, 'uid' => $user->getUID()]);
+		}
+
+		$web = $this->createWeb($config);
 		$health = $web->check();
 		if (!is_array($health) || ($health['stat'] ?? '') !== 'OK') {
+			$this->logger->warning('Duo health check failed: {reason}', [
+				'app' => self::APP_ID,
+				'reason' => is_array($health)
+					? trim(($health['message'] ?? $health['error'] ?? 'unknown') . ' ' . ($health['message_detail'] ?? $health['error_description'] ?? ''))
+					: ($web->last_error ?: 'no usable response'),
+			]);
 			$tmpl->assign('error', 'Duo Security is currently unreachable. Please try again later.');
 			return $tmpl;
 		}
@@ -82,7 +104,11 @@ class DuoProvider implements IProvider {
 		$state = $web->rand_str();
 		$this->session->set(self::SESSION_STATE, $state);
 		$tmpl->assign('duo_url', $web->auth($user->getUID(), $state));
-		Util::addScript(self::APP_ID, 'challenge');
+		if ($failed || $unfinished) {
+			$tmpl->assign('notice', 'The Duo sign-in was not completed. Try again, or contact your administrator if this keeps happening.');
+		} else {
+			Util::addScript(self::APP_ID, 'challenge');
+		}
 		return $tmpl;
 	}
 
@@ -90,7 +116,15 @@ class DuoProvider implements IProvider {
 		// The real verification happened in CallbackController; $challenge is unused.
 		$result = $this->session->get(self::SESSION_RESULT);
 		$this->session->remove(self::SESSION_RESULT);
-		return is_string($result) && hash_equals($user->getUID(), $result);
+		$passed = is_string($result) && hash_equals($user->getUID(), $result);
+		if (!$passed) {
+			$this->session->set(self::SESSION_FAILED, true);
+		}
+		return $passed;
+	}
+
+	protected function createWeb(array $config): Web {
+		return new Web($config['IKEY'], $config['SKEY'], $config['HOST'], $config['CALL']);
 	}
 
 	public function isTwoFactorAuthEnabledForUser(IUser $user): bool {

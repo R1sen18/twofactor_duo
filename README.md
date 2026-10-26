@@ -73,6 +73,23 @@ Every user is then re-evaluated at their next login and gets Duo. The command re
 
 Nextcloud's brute-force protection and rate limits on the challenge endpoint still apply.
 
+After a failed attempt, the challenge page shows a **Try again** button instead of opening the next Duo prompt by itself. Otherwise a failing login would send one push after another to the user's phone.
+
+## Troubleshooting
+Each failed Duo login writes a warning with the exact reason to `nextcloud.log` (log level 2 or lower):
+```bash
+sudo grep twofactor_duo /var/www/nextcloud/data/nextcloud.log | tail -n 5
+```
+
+| Symptom / log message | Cause and fix |
+|---|---|
+| `occ twofactor_duo:check`: *Integration type does not support frameless access* | The keys belong to a Duo application that can't use the Universal Prompt. Create a **Web SDK** application in the Duo Admin Panel and use its keys. |
+| Duo page *Access denied* / *Zugriff verweigert* | Duo blocks the user for this application. Check the Authentication Log in the Duo Admin Panel, and the application's **User access** / permitted groups and **New User Policy**. |
+| *Duo authenticated "x", Nextcloud expected "y"* | The Duo username differs from the Nextcloud user ID. The Duo username must match the Nextcloud user ID exactly. |
+| *no pending two-factor login in this session* | The browser didn't send the Nextcloud session cookie with Duo's redirect. `CALL` must use exactly the host name of the login page. |
+| *The previous Duo prompt … was not completed* | Duo's redirect never reached the app (or the user went back). Check `CALL` with `occ twofactor_duo:check`. |
+| *Duo did not allow the login* | Duo denied the login (push rejected, policy, …). The Duo Authentication Log has details. |
+
 ## Upgrading from 1.x or an older Duo app
 - Change `CALL` from `…/login/callback/duo` to `…/apps/twofactor_duo/callback`.
 - Remove `AKEY` if you have it. It belonged to the old Duo Web SDK v2 (iframe) app and isn't used anymore. `IKEY`, `SKEY` and `HOST` stay the same.
@@ -88,6 +105,7 @@ Nextcloud's brute-force protection and rate limits on the challenge endpoint sti
 - **OAuth `state` is now checked.** 1.x ignored it.
 - **Fails closed:** network errors and incomplete Duo responses now reject the login instead of throwing PHP errors. Requests to Duo time out after 20 seconds instead of hanging.
 - New `occ twofactor_duo:check` command (see [Checking the configuration](#checking-the-configuration)).
+- Failed logins are logged with their reason and don't trigger an endless series of push notifications (see [Troubleshooting](#troubleshooting)).
 - The certificate bundle is found by absolute path, so the app works from custom app directories.
 - The Duo redirect works without inline scripts, so Nextcloud's default CSP stays intact. The custom CSP from the iframe era is gone; it called `addAllowedChildSrcDomain()`, which Nextcloud 35 removed.
 
