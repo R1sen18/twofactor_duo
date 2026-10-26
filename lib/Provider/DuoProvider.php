@@ -5,9 +5,7 @@ declare(strict_types=1);
 namespace OCA\TwoFactorDuo\Provider;
 
 use OCA\TwoFactorDuo\Web;
-use OCP\AppFramework\Http\ContentSecurityPolicy;
 use OCP\Authentication\TwoFactorAuth\IProvider;
-use OCP\Authentication\TwoFactorAuth\IProvidesCustomCSP;
 use OCP\IConfig;
 use OCP\ISession;
 use OCP\IUser;
@@ -15,7 +13,11 @@ use OCP\Template\ITemplate;
 use OCP\Template\ITemplateManager;
 use OCP\Util;
 
-class DuoProvider implements IProvider, IProvidesCustomCSP {
+/**
+ * No custom CSP needed: the challenge page sends the browser to Duo with a
+ * top-level redirect (no iframe) and only loads this app's own script.
+ */
+class DuoProvider implements IProvider {
 	public const APP_ID = 'twofactor_duo';
 	public const PROVIDER_ID = 'duo';
 	/** OAuth state of the Duo prompt we started, checked in the callback. */
@@ -57,14 +59,6 @@ class DuoProvider implements IProvider, IProvidesCustomCSP {
 
 	public function getDescription(): string {
 		return 'Authenticate with Duo Universal Prompt';
-	}
-
-	public function getCSP(): ContentSecurityPolicy {
-		$csp = new ContentSecurityPolicy();
-		$csp->addAllowedChildSrcDomain('https://*.duosecurity.com');
-		$csp->addAllowedStyleDomain('https://*.duosecurity.com');
-		$csp->addAllowedFrameDomain('https://*.duosecurity.com');
-		return $csp;
 	}
 
 	public function getTemplate(IUser $user): ITemplate {

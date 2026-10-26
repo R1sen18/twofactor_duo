@@ -89,7 +89,7 @@ Nextcloud's brute-force protection and rate limits on the challenge endpoint sti
 - **Fails closed:** network errors and incomplete Duo responses now reject the login instead of throwing PHP errors. Requests to Duo time out after 20 seconds instead of hanging.
 - New `occ twofactor_duo:check` command (see [Checking the configuration](#checking-the-configuration)).
 - The certificate bundle is found by absolute path, so the app works from custom app directories.
-- The Duo redirect works without inline scripts, so Nextcloud's default CSP stays intact.
+- The Duo redirect works without inline scripts, so Nextcloud's default CSP stays intact. The custom CSP from the iframe era is gone; it called `addAllowedChildSrcDomain()`, which Nextcloud 35 removed.
 
 ## Development
 ```bash
