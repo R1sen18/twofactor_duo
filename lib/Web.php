@@ -12,7 +12,10 @@ class Web {
   /** cURL error of the last failed request to Duo, for diagnostics. */
   public $last_error = null;
 
+  /** Duo's own CA list (from duosecurity/duo_universal_php); the only roots trusted for Duo's API. */
   const DUO_CERTS    = __DIR__ . "/duo_certs.pem";
+  /** Identifies this app to Duo. Duo blocks outdated SDK versions by user agent, so don't pose as its SDK. */
+  const USER_AGENT    = "Nextcloud-twofactor_duo/2.2.1";
   const URL_TOKEN    = "/oauth/v1/token";
   const URL_HEALTH    = "/oauth/v1/health_check";
   const URL_AUTHORIZE = "/oauth/v1/authorize";
@@ -57,20 +60,21 @@ class Web {
     else return str_replace('=', '', strtr(base64_encode($text), '+/', '-_'));
   }
   
-  private function curl_duo_v4($endpoint, $request, $user_agent=null){
+  private function curl_duo_v4($endpoint, $request){
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, "https://".$this->duo_host.$endpoint);
     curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, $request);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($request));
     curl_setopt($ch, CURLOPT_PROTOCOLS, CURLPROTO_HTTPS);
-    curl_setopt($ch, CURLOPT_CAINFO, self::DUO_CERTS);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
+    // Pin Duo's CA list like Duo's SDK: a CA path that doesn't exist keeps the system store out.
+    curl_setopt($ch, CURLOPT_CAINFO, self::DUO_CERTS);
+    curl_setopt($ch, CURLOPT_CAPATH, __DIR__ . "/.no-system-ca-path");
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
     curl_setopt($ch, CURLOPT_TIMEOUT, 20);
-    if($user_agent !== null) {
-      curl_setopt($ch, CURLOPT_USERAGENT, $user_agent);
-    }
+    curl_setopt($ch, CURLOPT_USERAGENT, self::USER_AGENT." php/".PHP_VERSION);
     $res = curl_exec($ch);
     $this->last_error = is_string($res) ? null : curl_error($ch);
     curl_close($ch);
@@ -130,7 +134,6 @@ class Web {
   }
   public function get_result($duoCode, $username){
     $audience = "https://".$this->duo_host.self::URL_TOKEN;
-    $useragent = "duo_universal_php/1.0.2 php/".phpversion()." ".php_uname();
     $payload = $this->jwt_payload($audience);
     $request = ["grant_type" => 'authorization_code',
                 "code" => $duoCode,
@@ -138,7 +141,7 @@ class Web {
                 "client_id" => $this->duo_ikey,
                 "client_assertion_type" => "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
                 "client_assertion" => $payload];
-    $result = $this->curl_duo_v4(self::URL_TOKEN, $request, $useragent);
+    $result = $this->curl_duo_v4(self::URL_TOKEN, $request);
     return $result;
   }
   public function decode($duoCode, $username){
@@ -169,6 +172,9 @@ class Web {
       }
       if($token['aud'] !== $this->duo_ikey) {
         $err_msg = "Result missing expected data.";
+      }
+      if(($token['iss'] ?? null) !== "https://".$this->duo_host.self::URL_TOKEN) {
+        $err_msg = "The id_token was not issued by ".$this->duo_host.".";
       }
       if(!isset($token['preferred_username']) || $token['preferred_username'] !== $username) {
         $err_msg = "The username is invalid.";

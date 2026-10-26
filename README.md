@@ -89,6 +89,8 @@ sudo grep twofactor_duo /var/www/nextcloud/data/nextcloud.log | tail -n 5
 | *no pending two-factor login in this session* | The browser didn't send the Nextcloud session cookie with Duo's redirect. `CALL` must use exactly the host name of the login page. |
 | *The previous Duo prompt … was not completed* | Duo's redirect never reached the app (or the user went back). Check `CALL` with `occ twofactor_duo:check`. |
 | *Duo did not allow the login* | Duo denied the login (push rejected, policy, …). The Duo Authentication Log has details. |
+| *token endpoint returned ACCESS_FORBIDDEN (… deprecated and no longer supported)* | You're running app version < 2.2.1, which posed as an outdated Duo SDK. Update the app. |
+| *Duo could not be reached: SSL certificate problem* | Duo's certificate chain isn't covered by `lib/duo_certs.pem` anymore. Update the app, or replace the file with the current `src/ca_certs.pem` from [duo_universal_php](https://github.com/duosecurity/duo_universal_php). |
 
 ## Upgrading from 1.x or an older Duo app
 - Change `CALL` from `…/login/callback/duo` to `…/apps/twofactor_duo/callback`.
@@ -106,6 +108,9 @@ sudo grep twofactor_duo /var/www/nextcloud/data/nextcloud.log | tail -n 5
 - **Fails closed:** network errors and incomplete Duo responses now reject the login instead of throwing PHP errors. Requests to Duo time out after 20 seconds instead of hanging.
 - New `occ twofactor_duo:check` command (see [Checking the configuration](#checking-the-configuration)).
 - Failed logins are logged with their reason and don't trigger an endless series of push notifications (see [Troubleshooting](#troubleshooting)).
+- **No longer poses as Duo's PHP SDK.** 1.x sent the user agent `duo_universal_php/1.0.2`, and Duo now rejects that SDK version at the token endpoint (`ACCESS_FORBIDDEN … deprecated and no longer supported`). The app now identifies itself as `Nextcloud-twofactor_duo/<version>`.
+- **Current CA list, pinned like Duo's SDK:** `lib/duo_certs.pem` is Duo's current list from [duosecurity/duo_universal_php](https://github.com/duosecurity/duo_universal_php). Only these roots are trusted for Duo's API, not the system store.
+- The id_token's issuer (`iss`) must be Duo's token endpoint, as in Duo's SDK.
 - The certificate bundle is found by absolute path, so the app works from custom app directories.
 - The Duo redirect works without inline scripts, so Nextcloud's default CSP stays intact. The custom CSP from the iframe era is gone; it called `addAllowedChildSrcDomain()`, which Nextcloud 35 removed.
 
