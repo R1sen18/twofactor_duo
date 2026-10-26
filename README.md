@@ -1,5 +1,7 @@
 # Duo Universal Prompt 2FA for Nextcloud
 
+[![Tests](https://github.com/R1sen18/twofactor_duo/actions/workflows/tests.yml/badge.svg)](https://github.com/R1sen18/twofactor_duo/actions/workflows/tests.yml)
+
 Two-factor authentication with the [Duo Universal Prompt](https://duo.com/docs/universal-prompt-update-guide) (Duo Web SDK v4) for Nextcloud 32–35.
 
 This is a reworked fork of [tilyanPristka/twofactor_duo](https://github.com/tilyanPristka/twofactor_duo). Version 2.0 works on current Nextcloud releases **without patching any Nextcloud core files**.
@@ -114,10 +116,27 @@ sudo grep twofactor_duo /var/www/nextcloud/data/nextcloud.log | tail -n 5
 - The certificate bundle is found by absolute path, so the app works from custom app directories.
 - The Duo redirect works without inline scripts, so Nextcloud's default CSP stays intact. The custom CSP from the iframe era is gone; it called `addAllowedChildSrcDomain()`, which Nextcloud 35 removed.
 
-## Development
+## Tests
+The tests run with plain PHP CLI (8.1+, with the `curl` extension). No Nextcloud installation or Composer is needed. `tests/stubs.php` stands in for the Nextcloud APIs the app uses.
+
 ```bash
-find . -name '*.php' -not -path './.git/*' -exec php -l {} \;
+php tests/run.php            # all tests, offline
+php tests/run.php --online   # also call Duo's real API with fake credentials
+php tests/flow_test.php      # a single test file
 ```
+
+| File | Covers |
+|---|---|
+| `tests/flow_test.php` | Full login with a fake Duo client: success, every logged failure reason, the push-loop protection, routing attributes |
+| `tests/jwt_test.php` | id_token validation: signature, `alg`, expiry and leeway, base64url handling |
+| `tests/decode_test.php` | Token endpoint answers (issuer, audience, username, errors), user agent, CA bundle. With `--online`: TLS to Duo with the pinned CA list |
+| `tests/check_command_test.php` | `occ twofactor_duo:check` with valid, 1.x-style and missing configurations |
+
+A warning or deprecation notice fails the run. The stand-ins must keep the exact signatures of Nextcloud's `stable35` API: one that still had a method Nextcloud had removed once hid a crash on real servers.
+
+[GitHub Actions](.github/workflows/tests.yml) lints every PHP file and runs the offline tests on PHP 8.4 for every push and pull request. To include the online tests, start the workflow manually (*Actions → Tests → Run workflow*) and tick *online*.
+
+The test scripts only run from the command line. Called through the web server (the app folder is a git clone, so `tests/` is deployed too), they answer 404.
 
 ## Credits and licence
 Original app by Muhammad Ardyansyah / [tilyanPristka](https://github.com/tilyanPristka) (see [AUTHORS.md](AUTHORS.md)).
