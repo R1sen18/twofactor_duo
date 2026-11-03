@@ -21,7 +21,8 @@ use Symfony\Component\Console\Output\OutputInterface;
  */
 class Check extends Command {
 	private const CALLBACK_PATH = '/apps/twofactor_duo/callback';
-	private const KNOWN_KEYS = ['IKEY', 'SKEY', 'HOST', 'CALL'];
+	private const REQUIRED_KEYS = ['IKEY', 'SKEY', 'HOST', 'CALL'];
+	private const OPTIONAL_KEYS = ['USERNAME'];
 	private const LIST_LIMIT = 10;
 
 	private int $errors = 0;
@@ -65,6 +66,11 @@ class Check extends Command {
 			$this->checkDuo($config);
 		}
 
+		if ($valid && ($config['USERNAME'] ?? 'uid') === 'email') {
+			$this->section('Duo usernames (email addresses)');
+			$this->checkEmailUsernames();
+		}
+
 		$this->section('User states');
 		if ($input->getOption('reset-states')) {
 			$this->resetStates($valid);
@@ -91,7 +97,7 @@ class Check extends Command {
 			return;
 		}
 
-		foreach (self::KNOWN_KEYS as $key) {
+		foreach (self::REQUIRED_KEYS as $key) {
 			if (!isset($config[$key]) || !is_string($config[$key]) || trim($config[$key]) === '') {
 				$this->fail("$key is missing or empty.");
 			} elseif (trim($config[$key]) !== $config[$key]) {
@@ -128,7 +134,17 @@ class Check extends Command {
 			}
 		}
 
-		foreach (array_diff(array_keys($config), self::KNOWN_KEYS) as $extra) {
+		if (!isset($config['USERNAME'])) {
+			$this->ok('USERNAME: not set, Duo usernames are the Nextcloud user IDs');
+		} elseif (!in_array($config['USERNAME'], DuoProvider::USERNAME_SOURCES, true)) {
+			$this->fail('USERNAME must be \'' . implode('\' or \'', DuoProvider::USERNAME_SOURCES) . '\', not '
+				. var_export($config['USERNAME'], true) . '.');
+		} else {
+			$this->ok("USERNAME: {$config['USERNAME']}, Duo usernames are the "
+				. ($config['USERNAME'] === 'email' ? 'users\' email addresses' : 'Nextcloud user IDs'));
+		}
+
+		foreach (array_diff(array_keys($config), self::REQUIRED_KEYS, self::OPTIONAL_KEYS) as $extra) {
 			$hint = $extra === 'AKEY' ? ' (only used by the old Duo Web SDK v2 app; safe to remove)' : '';
 			$this->warn("Unknown key '$extra' is ignored$hint.");
 		}
@@ -240,6 +256,51 @@ class Check extends Command {
 		$this->warn(sprintf('%d user(s) have Duo stored as disabled and will NOT be asked for Duo: %s%s.',
 			count($disabled), $shown, $more));
 		$this->output->writeln('         If they should use Duo: occ twofactor_duo:check --reset-states (re-evaluates ALL users at their next login)');
+	}
+
+	/**
+	 * With USERNAME => email, a user's email address decides which Duo user must approve their login.
+	 * Users without an address, or who can change it themselves, are refused at login.
+	 */
+	private function checkEmailUsernames(): void {
+		$missing = [];
+		$editable = [];
+		$owners = [];
+		$this->userManager->callForSeenUsers(function (IUser $user) use (&$missing, &$editable, &$owners): void {
+			$email = $user->getSystemEMailAddress();
+			if ($email === null || $email === '') {
+				$missing[] = $user->getUID();
+				return;
+			}
+			if ($user->canChangeEmail()) {
+				$editable[] = $user->getUID();
+			}
+			$owners[$email][] = $user->getUID();
+		});
+
+		$shared = array_filter($owners, fn (array $uids): bool => count($uids) > 1);
+		if ($missing === [] && $editable === [] && $shared === []) {
+			$this->ok(sprintf('%d user(s) have their own email address and cannot change it', count($owners)));
+			return;
+		}
+		if ($editable !== []) {
+			$this->fail(sprintf('%d user(s) can change their own email address and therefore choose their Duo user;'
+				. ' they cannot sign in: %s. Set \'allow_user_to_change_email\' => false in config.php.',
+				count($editable), $this->listUids($editable)));
+		}
+		if ($missing !== []) {
+			$this->fail(sprintf('%d user(s) have no email address and cannot sign in: %s.',
+				count($missing), $this->listUids($missing)));
+		}
+		foreach ($shared as $email => $uids) {
+			$this->warn(sprintf('%s is the email address of %d users (%s); they all sign in as the same Duo user.',
+				$email, count($uids), $this->listUids($uids)));
+		}
+	}
+
+	private function listUids(array $uids): string {
+		$more = count($uids) > self::LIST_LIMIT ? sprintf(' and %d more', count($uids) - self::LIST_LIMIT) : '';
+		return implode(', ', array_slice($uids, 0, self::LIST_LIMIT)) . $more;
 	}
 
 	private function resetStates(bool $valid): void {

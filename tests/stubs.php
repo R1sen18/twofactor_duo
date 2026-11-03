@@ -79,6 +79,8 @@ namespace Symfony\Component\Console\Command {
 namespace OCP {
 	interface IUser {
 		public function getUID(): string;
+		public function canChangeEmail(): bool;
+		public function getSystemEMailAddress(): ?string;
 	}
 	interface IConfig {
 		public function getSystemValue($key, $default = '');

@@ -49,8 +49,25 @@ $config['twofactor_duo']['CALL'] = 'http://cloud.example.com:8443/index.php/apps
 $config['trusted_domains'] = ['cloud.example.com:8443'];
 expect('exit 0 with warnings', runCheck($config, ['offline' => true], new FakeRegistry([]), $users) === 0);
 
+section('F: USERNAME => email, all users have their own fixed address');
+$config = $good;
+$config['twofactor_duo']['USERNAME'] = 'email';
+$fixed = new FakeUserManager([new FakeUser('alice', 'alice@example.com'), new FakeUser('bob', 'bob@example.com')]);
+expect('exit 0', runCheck($config, ['offline' => true], new FakeRegistry([]), $fixed) === 0);
+
+section('G: USERNAME => email, missing, editable and shared addresses, --reset-states');
+$mixed = new FakeUserManager([new FakeUser('alice', 'alice@example.com'), new FakeUser('bob'),
+	new FakeUser('carol', 'carol@example.com', true), new FakeUser('dave', 'alice@example.com')]);
+$registry = new FakeRegistry($states);
+expect('exit 1', runCheck($config, ['offline' => true, 'reset-states' => true], $registry, $mixed) === 1);
+expect('reset refused while errors remain', $registry->cleaned === []);
+
+section('H: USERNAME with an unknown value');
+$config['twofactor_duo']['USERNAME'] = 'mail';
+expect('exit 1', runCheck($config, ['offline' => true], new FakeRegistry([]), $users) === 1);
+
 if (ONLINE) {
-	section('F: real Duo health check with fake credentials');
+	section('I: real Duo health check with fake credentials');
 	expect('exit 1 (Duo rejects the fake credentials)', runCheck($good, [], new FakeRegistry([]), $users) === 1);
 }
 

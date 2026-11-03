@@ -12,10 +12,16 @@ use OCP\Authentication\TwoFactorAuth\IProvider;
 use OCP\Authentication\TwoFactorAuth\IRegistry;
 
 class FakeUser implements OCP\IUser {
-	public function __construct(private string $uid) {
+	public function __construct(private string $uid, private ?string $email = null, private bool $canChangeEmail = false) {
 	}
 	public function getUID(): string {
 		return $this->uid;
+	}
+	public function canChangeEmail(): bool {
+		return $this->canChangeEmail;
+	}
+	public function getSystemEMailAddress(): ?string {
+		return $this->email;
 	}
 }
 
@@ -40,12 +46,13 @@ class FakeSession implements OCP\ISession {
 	}
 }
 
+/** Users given as uids or as FakeUser objects. */
 class FakeUserManager implements OCP\IUserManager {
-	public function __construct(private array $uids) {
+	public function __construct(private array $users) {
 	}
 	public function callForSeenUsers(\Closure $callback) {
-		foreach ($this->uids as $uid) {
-			if ($callback(new FakeUser($uid)) === false) {
+		foreach ($this->users as $user) {
+			if ($callback(is_string($user) ? new FakeUser($user) : $user) === false) {
 				break;
 			}
 		}

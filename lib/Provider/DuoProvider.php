@@ -26,12 +26,20 @@ class DuoProvider implements IProvider {
 	public const SESSION_STATE = 'twofactor_duo_state';
 	/** OIDC nonce of that prompt; must come back inside Duo's signed id_token. */
 	public const SESSION_NONCE = 'twofactor_duo_nonce';
+	/**
+	 * ['uid' => …, 'username' => …] of that prompt: the Nextcloud user it was started for and the
+	 * username sent to Duo. Duo's id_token must name that username, and the uid must still be the
+	 * user whose login is pending.
+	 */
+	public const SESSION_DUO_USER = 'twofactor_duo_username';
 	/** ['uid' => …, 'time' => …] of a login Duo approved, set by the callback. */
 	public const SESSION_RESULT = 'twofactor_duo_result';
 	/** Set when the last attempt failed, so the next challenge page doesn't start a new prompt by itself. */
 	public const SESSION_FAILED = 'twofactor_duo_failed';
 	/** Seconds an approval stays usable; the callback page submits it right away. */
 	public const RESULT_TTL = 120;
+	/** Values of the optional USERNAME key: what Nextcloud sends to Duo as the username. */
+	public const USERNAME_SOURCES = ['uid', 'email'];
 
 	public function __construct(
 		private IConfig $config,
@@ -51,7 +59,33 @@ class DuoProvider implements IProvider {
 				return false;
 			}
 		}
-		return true;
+		return !isset($config['USERNAME']) || in_array($config['USERNAME'], self::USERNAME_SOURCES, true);
+	}
+
+	/**
+	 * The user's name at Duo: the Nextcloud user ID, or with 'USERNAME' => 'email' the system email
+	 * address. Null if Duo can't be used for this user; the reason goes to the log.
+	 *
+	 * Whoever can change the address decides which Duo user must approve the login, so the email
+	 * is only used if the user can't change it themselves.
+	 */
+	private function getDuoUsername(IUser $user, #[\SensitiveParameter] array $config): ?string {
+		if (($config['USERNAME'] ?? 'uid') === 'uid') {
+			return $user->getUID();
+		}
+		$email = $user->getSystemEMailAddress();
+		if ($email === null || $email === '') {
+			$this->logger->error('Duo uses email addresses as usernames, but {uid} has no email address.',
+				['app' => self::APP_ID, 'uid' => $user->getUID()]);
+			return null;
+		}
+		if ($user->canChangeEmail()) {
+			$this->logger->error('Duo uses email addresses as usernames, but {uid} can change their own email address.'
+				. ' Set \'allow_user_to_change_email\' => false in config.php. Run occ twofactor_duo:check.',
+				['app' => self::APP_ID, 'uid' => $user->getUID()]);
+			return null;
+		}
+		return $email;
 	}
 
 	private function getConfig(): ?array {
@@ -88,6 +122,12 @@ class DuoProvider implements IProvider {
 			return $tmpl;
 		}
 
+		$duoUsername = $this->getDuoUsername($user, $config);
+		if ($duoUsername === null) {
+			$tmpl->assign('error', 'Duo can\'t be used for your account. Please contact your administrator.');
+			return $tmpl;
+		}
+
 		// A failed attempt, or a prompt whose callback never arrived, must not start the next prompt
 		// automatically: that sends endless pushes to the user's phone.
 		$failed = $this->session->get(self::SESSION_FAILED) === true;
@@ -116,7 +156,8 @@ class DuoProvider implements IProvider {
 		$nonce = $web->rand_str(64);
 		$this->session->set(self::SESSION_STATE, $state);
 		$this->session->set(self::SESSION_NONCE, $nonce);
-		$tmpl->assign('duo_url', $web->auth($user->getUID(), $state, $nonce));
+		$this->session->set(self::SESSION_DUO_USER, ['uid' => $user->getUID(), 'username' => $duoUsername]);
+		$tmpl->assign('duo_url', $web->auth($duoUsername, $state, $nonce));
 		if ($failed || $unfinished) {
 			$tmpl->assign('notice', 'The Duo sign-in was not completed. Try again, or contact your administrator if this keeps happening.');
 		} else {

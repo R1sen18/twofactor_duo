@@ -79,11 +79,13 @@ class CallbackController extends Controller {
 		}
 
 		$nonce = $this->session->get(DuoProvider::SESSION_NONCE);
+		$prompt = $this->session->get(DuoProvider::SESSION_DUO_USER);
 		$this->session->remove(DuoProvider::SESSION_STATE);
 		$this->session->remove(DuoProvider::SESSION_NONCE);
+		$this->session->remove(DuoProvider::SESSION_DUO_USER);
 		$this->session->remove(DuoProvider::SESSION_RESULT);
 
-		$failure = $this->verify($uid, (string)$this->request->getParam('duo_code', ''), $nonce);
+		$failure = $this->verify($uid, (string)$this->request->getParam('duo_code', ''), $nonce, $prompt);
 		if ($failure === null) {
 			$this->session->set(DuoProvider::SESSION_RESULT, ['uid' => $uid, 'time' => $this->timeFactory->getTime()]);
 			$this->session->remove(DuoProvider::SESSION_FAILED);
@@ -113,10 +115,12 @@ class CallbackController extends Controller {
 
 	/**
 	 * Called only after state matched, so the request answers this session's own prompt.
+	 * $prompt is what the challenge page stored: the user the prompt was started for and the
+	 * username it sent to Duo.
 	 *
 	 * @return string|null why the Duo response was rejected, or null if it is valid
 	 */
-	private function verify(string $uid, #[\SensitiveParameter] string $duoCode, #[\SensitiveParameter] mixed $nonce): ?string {
+	private function verify(string $uid, #[\SensitiveParameter] string $duoCode, #[\SensitiveParameter] mixed $nonce, mixed $prompt): ?string {
 		$duoError = (string)$this->request->getParam('error', '');
 		if ($duoError !== '') {
 			return trim('Duo returned an error: ' . self::clip($duoError) . ' '
@@ -128,6 +132,14 @@ class CallbackController extends Controller {
 		if (!is_string($nonce) || $nonce === '') {
 			return 'no nonce was stored for this Duo prompt';
 		}
+		$duoUsername = is_array($prompt) ? ($prompt['username'] ?? null) : null;
+		if (!is_string($duoUsername) || $duoUsername === '' || !is_string($prompt['uid'] ?? null)) {
+			return 'no Duo username was stored for this Duo prompt';
+		}
+		// The pending login switched to another user after the prompt was started in this session.
+		if (!hash_equals($prompt['uid'], $uid)) {
+			return sprintf('the Duo prompt was started for "%s", not for this login', self::clip($prompt['uid']));
+		}
 
 		$config = $this->config->getSystemValue(DuoProvider::APP_ID, null);
 		if (!DuoProvider::isValidConfig($config)) {
@@ -135,7 +147,7 @@ class CallbackController extends Controller {
 		}
 
 		$web = $this->createWeb($config);
-		$res = $web->decode($duoCode, $uid, $nonce);
+		$res = $web->decode($duoCode, $duoUsername, $nonce);
 
 		if (!is_array($res)) {
 			return 'no usable response from Duo\'s token endpoint';
@@ -150,8 +162,8 @@ class CallbackController extends Controller {
 			if ($web->last_error) {
 				$reason .= ' (' . self::clip($web->last_error) . ')';
 			}
-			if (isset($res['preferred_username']) && $res['preferred_username'] !== $uid) {
-				$reason .= sprintf(' Duo authenticated "%s", Nextcloud expected "%s".', self::clip($res['preferred_username']), $uid);
+			if (isset($res['preferred_username']) && $res['preferred_username'] !== $duoUsername) {
+				$reason .= sprintf(' Duo authenticated "%s", Nextcloud expected "%s".', self::clip($res['preferred_username']), $duoUsername);
 			}
 			return $reason;
 		}

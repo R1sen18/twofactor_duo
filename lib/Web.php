@@ -19,7 +19,7 @@ class Web {
   /** Duo's own CA list (from duosecurity/duo_universal_php); the only roots trusted for Duo's API. */
   const DUO_CERTS     = __DIR__ . "/duo_certs.pem";
   /** Identifies this app to Duo. Duo blocks outdated SDK versions by user agent, so don't pose as its SDK. */
-  const USER_AGENT    = "Nextcloud-twofactor_duo/2.3.0";
+  const USER_AGENT    = "Nextcloud-twofactor_duo/2.4.0";
   const URL_TOKEN     = "/oauth/v1/token";
   const URL_HEALTH    = "/oauth/v1/health_check";
   const URL_AUTHORIZE = "/oauth/v1/authorize";

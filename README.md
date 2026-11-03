@@ -9,7 +9,7 @@ This is a reworked fork of [tilyanPristka/twofactor_duo](https://github.com/tily
 | | |
 |---|---|
 | Nextcloud | 32 – 35 |
-| PHP | 8.1+ (tested with 8.4) |
+| PHP | 8.1+ (tested with 8.1, 8.4 and 8.5) |
 | Core patches | none |
 
 ## Installation
@@ -24,6 +24,14 @@ This is a reworked fork of [tilyanPristka/twofactor_duo](https://github.com/tily
    chown -R www-data:www-data twofactor_duo
    ```
    The archive contains only the app, without the tests and CI files. To deploy a git clone instead, see [Web server](#web-server).
+
+   To install an older version instead, take its archive from the [releases page](https://github.com/R1sen18/twofactor_duo/releases), e.g. for 2.3.0:
+   ```bash
+   curl -fsSLO https://github.com/R1sen18/twofactor_duo/releases/download/v2.3.0/twofactor_duo-2.3.0.tar.gz
+   curl -fsSLO https://github.com/R1sen18/twofactor_duo/releases/download/v2.3.0/twofactor_duo-2.3.0.tar.gz.sha256
+   sha256sum -c twofactor_duo-2.3.0.tar.gz.sha256
+   ```
+   Then continue with `tar xzf twofactor_duo-2.3.0.tar.gz` as above. Only the latest release gets security fixes (see [SECURITY.md](SECURITY.md)).
 2. Add the configuration below to `config/config.php` **before** enabling the app. Otherwise every login stops at "Duo is not configured" until you do.
 3. Enable the app and check the setup right away:
    ```bash
@@ -65,6 +73,20 @@ In the [Duo Admin Panel](https://admin.duosecurity.com), protect a new **Web SDK
 - While the app is enabled, Duo is required for **every user**. If a value is missing or invalid, nobody can pass Duo: the login stops at "Duo is not configured" and an error is logged. This fails closed on purpose (see [Stored user states](#stored-user-states)).
 - Keep the Client secret out of version control. `config.php` is the right place for it.
 
+### Duo usernames: user ID or email address
+By default the app sends the **Nextcloud user ID** to Duo as the username. If your Duo users are named by email address instead (e.g. `jmaier@example.com` while the Nextcloud user ID is `jmaier`), add:
+```php
+    'USERNAME' => 'email',
+```
+- The app then sends the user's email address, as set by the admin, LDAP or SSO (Nextcloud's *system* email address, lower-cased). Additional addresses a user adds in their personal settings are not used.
+- Whoever can change a user's email address decides which Duo user must approve that user's login. With `'USERNAME' => 'email'`, a user who can change their own address is therefore refused at login. Set this in `config.php` (Nextcloud 32+):
+  ```php
+  'allow_user_to_change_email' => false,
+  ```
+- Users without an email address can't sign in either. `occ twofactor_duo:check` lists users without an address, users who can change it, and addresses shared by several users (they all sign in as the same Duo user).
+- Admins, group admins of the user's groups and whoever manages LDAP can still change the address. Treat that right like the right to reset the user's second factor.
+- Alternative without this option: keep the default and add the Nextcloud user ID as a **username alias** to each Duo user (Duo Admin Panel → Users → user → Username aliases, or via directory sync).
+
 ### Recommended Duo settings
 The app accepts a login when Duo says `allow`. Duo also says `allow` in cases you may not want, so check in the Duo Admin Panel:
 - **New User Policy** of the application: *Require enrollment* or *Deny access*, not *Allow access without 2FA*.
@@ -76,7 +98,8 @@ The app accepts a login when Duo says `allow`. Duo also says `allow` in cases yo
 sudo -u www-data php occ twofactor_duo:check
 ```
 The command checks:
-- **Configuration:** all four values are present, plausible and free of stray whitespace. `HOST` must not contain `https://`. Leftover keys such as `AKEY` from the old Web SDK v2 app are reported.
+- **Configuration:** all four values are present, plausible and free of stray whitespace. `HOST` must not contain `https://`. Leftover keys such as `AKEY` from the old Web SDK v2 app are reported. `USERNAME`, if set, must be `uid` or `email`.
+- **Duo usernames** (only with `'USERNAME' => 'email'`): users without an email address or who can change it (errors), and addresses shared by several users (warning).
 - **Callback URL:** `CALL` ends in `/apps/twofactor_duo/callback`, matches `overwrite.cli.url`, and its host is in `trusted_domains`. Otherwise Nextcloud would reject Duo's redirect.
 - **Duo API:** runs Duo's health check, which only passes if Duo accepts `IKEY`, `SKEY` and `HOST` together. Failures show Duo's own error (e.g. `invalid_client`) or the network error (DNS, TLS, timeout). Skip this part with `--offline`.
 - **User states:** lists users for whom Nextcloud has stored Duo as disabled (see below).
@@ -110,7 +133,7 @@ To return to Duo, fix the problem, re-enable the app and run `occ twofactor_duo:
 2. Duo redirects back to `/apps/twofactor_duo/callback`. The app owns this route, so core doesn't need patching. The callback:
    - ignores the request without touching the session unless there is a pending login and `state` matches the prompt this session started. That way forged links can't cancel a login or fill the log;
    - exchanges `duo_code` for an id_token at Duo's token endpoint. TLS only trusts Duo's CA list in `lib/duo_certs.pem`;
-   - validates the token's HS512 signature, time claims, issuer, audience, `nonce` and `preferred_username` against the user who is waiting for 2FA;
+   - validates the token's HS512 signature, time claims, issuer, audience, `nonce` and `preferred_username` against the username the challenge page sent to Duo, and checks that the prompt was started for the user who is waiting for 2FA;
    - stores the approval in the session for **120 seconds**.
 3. The callback page submits Nextcloud's regular `/login/challenge/duo` form. Core then calls `verifyChallenge()`, which consumes the approval and finishes the login.
 
@@ -141,7 +164,8 @@ sudo grep twofactor_duo /var/www/nextcloud/data/nextcloud.log | tail -n 5
 | `occ twofactor_duo:check`: *Integration type does not support frameless access* | The keys belong to a Duo application that can't use the Universal Prompt. Create a **Web SDK** application in the Duo Admin Panel and use its keys. |
 | Login stops at *Duo is not configured*; log: *Duo is enabled but its configuration is missing or incomplete* | Fix the `twofactor_duo` values in `config.php` and run `occ twofactor_duo:check`. |
 | Duo page *Access denied* / *Zugriff verweigert* | Duo blocks the user for this application. Check the Authentication Log in the Duo Admin Panel, and the application's **User access** / permitted groups and **New User Policy**. |
-| *Duo authenticated "x", Nextcloud expected "y"* | The Duo username differs from the Nextcloud user ID. The Duo username must match the Nextcloud user ID exactly. |
+| *Duo authenticated "x", Nextcloud expected "y"* | The Duo username differs from what Nextcloud sent. By default that is the Nextcloud user ID; with `'USERNAME' => 'email'` the email address. Either match the Duo usernames exactly, add a Duo username alias, or switch `USERNAME` (see [Duo usernames](#duo-usernames-user-id-or-email-address)). |
+| Login stops at *Duo can't be used for your account*; log: *… has no email address* / *… can change their own email address* | Only with `'USERNAME' => 'email'`. Give the user an email address, or set `'allow_user_to_change_email' => false`. `occ twofactor_duo:check` lists the affected users. |
 | After Duo, the challenge or login page appears again and nothing is logged | The callback didn't match a Duo prompt of this browser session and was ignored. It is logged only at log level 0: *Ignored a Duo callback …*. Usually `CALL` uses a different host than the login page, so the browser didn't send the session cookie. Check with `occ twofactor_duo:check`. |
 | *The previous Duo prompt … was not completed* | Duo's redirect never reached the app (or the user went back). Check `CALL` with `occ twofactor_duo:check`. |
 | *The nonce does not belong to this login attempt* | Duo's answer belongs to another prompt, e.g. from a second login tab. Try again in one tab. |
@@ -156,6 +180,11 @@ sudo grep twofactor_duo /var/www/nextcloud/data/nextcloud.log | tail -n 5
 - Replace the old app folder. Don't install this one next to it: both use the folder and app ID `twofactor_duo`.
 - Run `occ twofactor_duo:check`. Older Duo apps used the same provider ID `duo`, so their stored per-user states still apply (see [Stored user states](#stored-user-states)).
 - Remove the 1.x edits to `core/routes.php`, `IProvider.php`, `Manager.php` and `BackupCodesProvider.php`. Reinstalling or upgrading Nextcloud restores the original files. On Nextcloud 32+, those patches no longer apply anyway.
+
+## Changes in 2.4
+- **Optional email usernames:** `'USERNAME' => 'email'` sends the user's system email address to Duo instead of the Nextcloud user ID (see [Duo usernames](#duo-usernames-user-id-or-email-address)). Users who can change their own address, or have none, are refused at login. `occ twofactor_duo:check` reports them.
+- The callback checks that the Duo prompt was started for the user whose login is pending, not only that Duo's answer names the expected username.
+- Tested with PHP 8.1, 8.4 and 8.5 in CI.
 
 ## Changes in 2.3 (security review)
 - **Fails closed on a broken configuration.** Before, users who logged in while the configuration was missing or invalid were stored as "Duo disabled" for good.
@@ -203,7 +232,7 @@ php tests/flow_test.php      # a single test file
 
 A warning or deprecation notice fails the run. The stand-ins must keep the exact signatures of Nextcloud's `stable35` API: one that still had a method Nextcloud had removed once hid a crash on real servers.
 
-[GitHub Actions](.github/workflows/tests.yml) lints every PHP file, runs the offline tests on PHP 8.4 and runs the Apache check for every push and pull request. To include the online tests, start the workflow manually (*Actions → Tests → Run workflow*) and tick *online*.
+[GitHub Actions](.github/workflows/tests.yml) lints every PHP file, runs the offline tests on PHP 8.1, 8.4 and 8.5 and runs the Apache check for every push and pull request. To include the online tests, start the workflow manually (*Actions → Tests → Run workflow*) and tick *online*.
 
 The test scripts only run from the command line. Called through the web server, they answer 404, and on Apache the `.htaccess` blocks `tests/` anyway.
 
