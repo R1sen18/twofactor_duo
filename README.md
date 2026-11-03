@@ -74,7 +74,7 @@ In the [Duo Admin Panel](https://admin.duosecurity.com), protect a new **Web SDK
 - Keep the Client secret out of version control. `config.php` is the right place for it.
 
 ### Duo usernames: user ID or email address
-By default the app sends the **Nextcloud user ID** to Duo as the username. If your Duo users are named by email address instead (e.g. `jmaier@example.com` while the Nextcloud user ID is `jmaier`), add:
+By default the app sends the **Nextcloud user ID** to Duo as the username. If your Duo users are named by email address instead (e.g. `user@example.com` while the Nextcloud user ID is `user`), add:
 ```php
     'USERNAME' => 'email',
 ```
