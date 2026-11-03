@@ -45,13 +45,13 @@ class TestCallback extends CallbackController {
 
 $config = new FakeConfig(['twofactor_duo' => ['IKEY' => 'DIABCDEFGHIJKLMNOP12', 'SKEY' => str_repeat('s', 40),
 	'HOST' => 'api-0.duosecurity.com', 'CALL' => 'https://cloud.example.com/apps/twofactor_duo/callback']]);
-$allow = ['err_msg' => 'null', 'preferred_username' => 'j.maier',
+$allow = ['err_msg' => 'null', 'preferred_username' => 'user',
 	'auth_result' => ['result' => 'allow', 'status' => 'allow', 'status_msg' => 'Login Successful']];
-$user = new FakeUser('j.maier');
+$user = new FakeUser('user');
 $clock = new FakeTimeFactory();
 
 $session = new FakeSession();
-$session->set('two_factor_auth_uid', 'j.maier');
+$session->set('two_factor_auth_uid', 'user');
 $log = new FakeLogger();
 $provider = new TestProvider($config, $session, new FakeTemplateManager(), $log, $clock);
 
@@ -79,18 +79,18 @@ expect('state and nonce stored in the session and sent to Duo', $state !== '' &&
 FakeWeb::$decodeResult = $allow;
 $response = $duoRedirect(['duo_code' => 'code', 'state' => $state]);
 expect('Duo\'s answer is checked against the nonce sent to Duo', FakeWeb::$decodedWithNonce === $nonce);
-expect('... and against the Nextcloud user ID as Duo username', ($queryOf($page)['u'] ?? '') === 'j.maier' && FakeWeb::$decodedWithUsername === 'j.maier');
+expect('... and against the Nextcloud user ID as Duo username', ($queryOf($page)['u'] ?? '') === 'user' && FakeWeb::$decodedWithUsername === 'user');
 expect('state, nonce and username are single-use', $session->get(DuoProvider::SESSION_STATE) === null && $session->get(DuoProvider::SESSION_NONCE) === null
 	&& $session->get(DuoProvider::SESSION_DUO_USER) === null);
-expect('approval stored with uid and time', $session->get(DuoProvider::SESSION_RESULT) === ['uid' => 'j.maier', 'time' => $clock->time]);
-expect('callback logs the success', str_contains($log->last(), 'info: Duo authentication succeeded for j.maier'), $log->last());
+expect('approval stored with uid and time', $session->get(DuoProvider::SESSION_RESULT) === ['uid' => 'user', 'time' => $clock->time]);
+expect('callback logs the success', str_contains($log->last(), 'info: Duo authentication succeeded for user'), $log->last());
 expect('callback page posts to core\'s solveChallenge', $response instanceof TemplateResponse && $response->params['action'] === '/index.php/login/challenge/duo');
 expect('callback page queues callback.js', in_array('twofactor_duo/callback', OCP\Util::$scripts, true));
 expect('verifyChallenge() accepts', $provider->verifyChallenge($user, 'duo'));
 expect('no failure flag left behind', $session->get(DuoProvider::SESSION_FAILED) === null);
 
 section('2. The approval is bound to the user, single-use and short-lived');
-$approve = fn (int $age, string $uid = 'j.maier') => $session->set(DuoProvider::SESSION_RESULT, ['uid' => $uid, 'time' => $clock->time - $age]);
+$approve = fn (int $age, string $uid = 'user') => $session->set(DuoProvider::SESSION_RESULT, ['uid' => $uid, 'time' => $clock->time - $age]);
 $approve(0);
 expect('another user is rejected', !$provider->verifyChallenge(new FakeUser('mallory'), 'duo'));
 expect('... and the approval is consumed by that attempt', $session->get(DuoProvider::SESSION_RESULT) === null);
@@ -104,19 +104,19 @@ expect('rejected after ' . DuoProvider::RESULT_TTL . ' s', !$provider->verifyCha
 expect('... with a warning', str_contains($log->last(), 'that was 121 s old'), $log->last());
 $approve(-30);
 expect('approval from the future rejected', !$provider->verifyChallenge($user, 'duo'));
-$session->set(DuoProvider::SESSION_RESULT, 'j.maier');
+$session->set(DuoProvider::SESSION_RESULT, 'user');
 expect('approval in the old (2.2) format rejected', !$provider->verifyChallenge($user, 'duo'));
 $approve(0);
 $showChallenge();
 expect('a new prompt discards an approval that was never submitted', !$provider->verifyChallenge($user, 'duo'));
 
 section('3. Duo denies the login: no push loop');
-$session->data = ['two_factor_auth_uid' => 'j.maier'];
+$session->data = ['two_factor_auth_uid' => 'user'];
 $state = $queryOf($showChallenge())['state'];
-FakeWeb::$decodeResult = ['err_msg' => 'null', 'preferred_username' => 'j.maier',
+FakeWeb::$decodeResult = ['err_msg' => 'null', 'preferred_username' => 'user',
 	'auth_result' => ['result' => 'deny', 'status' => 'deny', 'status_msg' => 'Login denied']];
 $duoRedirect(['duo_code' => 'code', 'state' => $state]);
-expect('reason logged', str_contains($log->last(), 'warning: Duo authentication failed for j.maier: Duo did not allow the login (result "deny", status "Login denied")'), $log->last());
+expect('reason logged', str_contains($log->last(), 'warning: Duo authentication failed for user: Duo did not allow the login (result "deny", status "Login denied")'), $log->last());
 expect('verifyChallenge() rejects', !$provider->verifyChallenge($user, 'duo'));
 $page = $showChallenge();
 expect('next challenge page shows a notice and Try again', $page->vars['notice'] !== '' && $page->vars['duo_url'] !== '');
@@ -130,9 +130,9 @@ section('4. Logged failure reasons (answers to this session\'s own prompt)');
 $cases = [
 	'Duo error parameter' => [['error' => 'access_denied', 'error_description' => 'User denied'], $allow,
 		'Duo returned an error: access_denied User denied'],
-	'username mismatch' => [['duo_code' => 'code'], ['err_msg' => 'The username is invalid.', 'preferred_username' => 'jmaier@example.com', 'auth_result' => ['result' => 'allow']],
-		'token validation failed: The username is invalid. Duo authenticated "jmaier@example.com", Nextcloud expected "j.maier".'],
-	'nonce mismatch' => [['duo_code' => 'code'], ['err_msg' => 'The nonce does not belong to this login attempt.', 'preferred_username' => 'j.maier'],
+	'username mismatch' => [['duo_code' => 'code'], ['err_msg' => 'The username is invalid.', 'preferred_username' => 'user@example.com', 'auth_result' => ['result' => 'allow']],
+		'token validation failed: The username is invalid. Duo authenticated "user@example.com", Nextcloud expected "user".'],
+	'nonce mismatch' => [['duo_code' => 'code'], ['err_msg' => 'The nonce does not belong to this login attempt.', 'preferred_username' => 'user'],
 		'token validation failed: The nonce does not belong to this login attempt.'],
 	'token endpoint error' => [['duo_code' => 'code'], ['error' => 'ACCESS_FORBIDDEN', 'error_description' => 'Client duo_universal_php version 1.0.2 is deprecated'],
 		'Duo\'s token endpoint returned ACCESS_FORBIDDEN (Client duo_universal_php version 1.0.2 is deprecated)'],
@@ -160,7 +160,7 @@ expect('anonymous request: redirected away', $response instanceof RedirectRespon
 expect('... nothing logged as a warning (no log flooding)', $problemsLogged() === 0, implode(' | ', $log->lines));
 expect('... session untouched', $anonymous->data === []);
 
-$session->data = ['two_factor_auth_uid' => 'j.maier'];
+$session->data = ['two_factor_auth_uid' => 'user'];
 $state = $queryOf($showChallenge())['state'];
 $log->lines = [];
 $response = $duoRedirect(['state' => 'forged', 'error' => 'access_denied']);
@@ -175,21 +175,21 @@ expect('the real answer still works afterwards', $provider->verifyChallenge($use
 
 $session->data = ['two_factor_auth_uid' => 'mallory'];
 $state = $queryOf($provider->getTemplate(new FakeUser('mallory')))['state'];
-$session->set('two_factor_auth_uid', 'j.maier');   // same session, now pending for another user
+$session->set('two_factor_auth_uid', 'user');   // same session, now pending for another user
 FakeWeb::$decodeResult = ['preferred_username' => 'mallory'] + $allow;
 $duoRedirect(['duo_code' => 'code', 'state' => $state]);
 expect('prompt started for another user: rejected', !$provider->verifyChallenge($user, 'duo'));
 expect('... and logged', str_contains($log->last(), 'the Duo prompt was started for "mallory", not for this login'), $log->last());
 
 section('6. Duo\'s redirect never arrives');
-$session->data = ['two_factor_auth_uid' => 'j.maier'];
+$session->data = ['two_factor_auth_uid' => 'user'];
 $showChallenge();               // prompt started, the browser never comes back
 $page = $showChallenge();       // user lands on the challenge page again
 expect('no automatic redirect, Try again shown', $page->vars['notice'] !== '' && !$autoRedirects());
 expect('warning about the missing callback logged', str_contains($log->last(), 'was not completed'), $log->last());
 
 section('7. Health check fails');
-$session->data = ['two_factor_auth_uid' => 'j.maier'];
+$session->data = ['two_factor_auth_uid' => 'user'];
 FakeWeb::$health = ['stat' => 'FAIL', 'code' => 40301, 'message' => 'invalid_client', 'message_detail' => 'Integration type does not support frameless access.'];
 $page = $showChallenge();
 expect('error shown, no Duo link', $page->vars['error'] !== '' && $page->vars['duo_url'] === '');
@@ -209,22 +209,22 @@ foreach (['incomplete config' => ['twofactor_duo' => ['AKEY' => 'x']], 'no confi
 section('9. USERNAME => email');
 $emailConfig = new FakeConfig(['twofactor_duo' => ['USERNAME' => 'email'] + $config->values['twofactor_duo']]);
 $emailSession = new FakeSession();
-$emailSession->set('two_factor_auth_uid', 'j.maier');
+$emailSession->set('two_factor_auth_uid', 'user');
 $emailProvider = new TestProvider($emailConfig, $emailSession, new FakeTemplateManager(), $log, $clock);
-$emailUser = new FakeUser('j.maier', 'jmaier@example.com');
+$emailUser = new FakeUser('user', 'user@example.com');
 $query = $queryOf($emailProvider->getTemplate($emailUser));
-expect('the email address is sent to Duo', ($query['u'] ?? '') === 'jmaier@example.com');
-FakeWeb::$decodeResult = ['preferred_username' => 'jmaier@example.com'] + $allow;
+expect('the email address is sent to Duo', ($query['u'] ?? '') === 'user@example.com');
+FakeWeb::$decodeResult = ['preferred_username' => 'user@example.com'] + $allow;
 (new TestCallback('twofactor_duo', new FakeRequest(['duo_code' => 'code', 'state' => $query['state']]), $emailConfig, $emailSession,
 	new FakeUrlGenerator(), $log, $clock))->index();
-expect('Duo\'s answer is checked against the email address', FakeWeb::$decodedWithUsername === 'jmaier@example.com');
+expect('Duo\'s answer is checked against the email address', FakeWeb::$decodedWithUsername === 'user@example.com');
 expect('login succeeds for the Nextcloud user', $emailProvider->verifyChallenge($emailUser, 'duo'));
 $blocked = [
-	'no email address' => [new FakeUser('j.maier'), 'has no email address'],
-	'email the user can change' => [new FakeUser('j.maier', 'jmaier@example.com', true), 'can change their own email address'],
+	'no email address' => [new FakeUser('user'), 'has no email address'],
+	'email the user can change' => [new FakeUser('user', 'user@example.com', true), 'can change their own email address'],
 ];
 foreach ($blocked as $name => [$blockedUser, $logged]) {
-	$emailSession->data = ['two_factor_auth_uid' => 'j.maier'];
+	$emailSession->data = ['two_factor_auth_uid' => 'user'];
 	$page = $emailProvider->getTemplate($blockedUser);
 	expect("$name: login blocked with an error", $page->vars['error'] !== '' && $page->vars['duo_url'] === '');
 	expect("$name: no prompt started", $emailSession->get(DuoProvider::SESSION_STATE) === null);

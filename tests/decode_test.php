@@ -26,12 +26,12 @@ class CannedWeb extends Web {
 
 $nonce = str_repeat('n', 64);
 $claims = ['iss' => "https://$host/oauth/v1/token", 'aud' => $ikey, 'iat' => time(), 'exp' => time() + 300, 'nonce' => $nonce,
-	'preferred_username' => 'j.maier', 'auth_result' => ['result' => 'allow', 'status' => 'allow', 'status_msg' => 'Login Successful']];
+	'preferred_username' => 'user', 'auth_result' => ['result' => 'allow', 'status' => 'allow', 'status_msg' => 'Login Successful']];
 $decode = function (array $idToken, array $response = [], ?string $expectedNonce = null) use ($jwt, $secret, $host, $ikey, $nonce): array {
 	$web = new CannedWeb($ikey, $secret, $host, 'https://x/cb');
 	$web->tokenResponse = $response + ['id_token' => $jwt($idToken), 'access_token' => 'a', 'expires_in' => 300, 'token_type' => 'Bearer'];
 	try {
-		return $web->decode('code', 'j.maier', $expectedNonce ?? $nonce);
+		return $web->decode('code', 'user', $expectedNonce ?? $nonce);
 	} catch (Throwable $e) {
 		return ['err_msg' => 'threw ' . get_class($e) . ': ' . $e->getMessage()];
 	}
@@ -40,14 +40,14 @@ $decode = function (array $idToken, array $response = [], ?string $expectedNonce
 section('Authorization request sent to Duo');
 $call = 'https://cloud.example.com/apps/twofactor_duo/callback';
 $state = str_repeat('s', 36);
-$url = (new Web($ikey, $secret, $host, $call))->auth('j.maier', $state, $nonce);
+$url = (new Web($ikey, $secret, $host, $call))->auth('user', $state, $nonce);
 parse_str((string)parse_url($url, PHP_URL_QUERY), $query);
 [$h, $p, $signature] = explode('.', $query['request'] ?? '..');
 $request = json_decode((string)base64_decode(strtr($p, '-_', '+/')), true) ?: [];
 expect('goes to Duo\'s authorize endpoint', str_starts_with($url, "https://$host/oauth/v1/authorize?"), $url);
 expect('request JWT is signed with the client secret (HS512)', hash_equals($b64u(hash_hmac('sha512', "$h.$p", $secret, true)), $signature));
 expect('request carries state, nonce and username', ($request['state'] ?? '') === $state && ($request['nonce'] ?? '') === $nonce
-	&& ($request['duo_uname'] ?? '') === 'j.maier', json_encode($request));
+	&& ($request['duo_uname'] ?? '') === 'user', json_encode($request));
 expect('request is for this client and expires within 5 minutes', ($request['client_id'] ?? '') === $ikey && ($request['aud'] ?? '') === "https://$host"
 	&& ($request['exp'] ?? 0) > time() && $request['exp'] <= time() + 300);
 expect('redirect_uri is CALL', ($query['redirect_uri'] ?? '') === $call && ($request['redirect_uri'] ?? '') === $call);
@@ -81,9 +81,9 @@ expect('missing iat rejected', $decode(array_diff_key($claims, ['iat' => 1]))['e
 section('Errors from Duo');
 $web = new CannedWeb($ikey, $secret, $host, 'https://x/cb');
 $web->tokenResponse = ['error' => 'invalid_grant', 'error_description' => 'expired'];
-expect('token endpoint error passed through', ($web->decode('code', 'j.maier', $nonce)['error'] ?? '') === 'invalid_grant');
+expect('token endpoint error passed through', ($web->decode('code', 'user', $nonce)['error'] ?? '') === 'invalid_grant');
 $web->tokenResponse = null;
-expect('no answer from Duo handled', ($web->decode('code', 'j.maier', $nonce)['err_msg'] ?? '') === 'No response from Duo.');
+expect('no answer from Duo handled', ($web->decode('code', 'user', $nonce)['err_msg'] ?? '') === 'No response from Duo.');
 
 section('Request details');
 preg_match('#<version>([^<]+)</version>#', (string)file_get_contents(dirname(__DIR__) . '/appinfo/info.xml'), $version);
