@@ -13,12 +13,17 @@ This is a reworked fork of [tilyanPristka/twofactor_duo](https://github.com/tily
 | Core patches | none |
 
 ## Installation
-1. Copy this repository to `nextcloud/apps/twofactor_duo` (or to a custom apps directory). The folder name must be `twofactor_duo`.
+1. Download the [latest release](https://github.com/R1sen18/twofactor_duo/releases/latest), verify it and extract it into `nextcloud/apps` (or into a custom apps directory). The archive contains the folder `twofactor_duo`; the folder name must stay like that.
    ```bash
    cd /var/www/nextcloud/apps
-   git clone <this-repo-url> twofactor_duo
+   curl -fsSLO https://github.com/R1sen18/twofactor_duo/releases/latest/download/twofactor_duo.tar.gz
+   curl -fsSLO https://github.com/R1sen18/twofactor_duo/releases/latest/download/twofactor_duo.tar.gz.sha256
+   sha256sum -c twofactor_duo.tar.gz.sha256
+   tar xzf twofactor_duo.tar.gz
+   rm twofactor_duo.tar.gz twofactor_duo.tar.gz.sha256
    chown -R www-data:www-data twofactor_duo
    ```
+   The archive contains only the app, without the tests and CI files. To deploy a git clone instead, see [Web server](#web-server).
 2. Add the configuration below to `config/config.php` **before** enabling the app. Otherwise every login stops at "Duo is not configured" until you do.
 3. Enable the app and check the setup right away:
    ```bash
@@ -26,6 +31,22 @@ This is a reworked fork of [tilyanPristka/twofactor_duo](https://github.com/tily
    sudo -u www-data php occ twofactor_duo:check
    ```
    If something goes wrong and users must get in without Duo, see [Emergency](#emergency-let-users-in-without-duo). Disabling the app alone does **not** do that.
+
+### Updating
+Replace the app folder with the latest release. Remove the old folder first, so no files of the old version are left behind. The Duo configuration lives in `config.php` and is not touched.
+```bash
+cd /var/www/nextcloud/apps
+curl -fsSLO https://github.com/R1sen18/twofactor_duo/releases/latest/download/twofactor_duo.tar.gz
+curl -fsSLO https://github.com/R1sen18/twofactor_duo/releases/latest/download/twofactor_duo.tar.gz.sha256
+sha256sum -c twofactor_duo.tar.gz.sha256
+rm -rf twofactor_duo
+tar xzf twofactor_duo.tar.gz
+rm twofactor_duo.tar.gz twofactor_duo.tar.gz.sha256
+chown -R www-data:www-data twofactor_duo
+sudo -u www-data php occ upgrade
+sudo -u www-data php occ twofactor_duo:check
+```
+Keep the time between `rm -rf` and `tar` short: while the folder is missing, Duo logins fail.
 
 ## Configuration
 In the [Duo Admin Panel](https://admin.duosecurity.com), protect a new **Web SDK** application and copy its Client ID, Client secret and API hostname.
@@ -98,7 +119,9 @@ The callback is rate-limited (10 requests per 5 minutes per user or IP), and Nex
 After a failed attempt, the challenge page shows a **Try again** button instead of opening the next Duo prompt by itself. Otherwise a failing login would send one push after another to the user's phone.
 
 ## Web server
-The app is usually deployed as a git clone. Nextcloud's own `.htaccess` only blocks folders like `.git` and `tests` at the web root, not inside app folders. This app therefore ships its own `.htaccess`, which returns 404 for its `.git`, `.github` and `tests` folders on Apache. A CI job checks it with a real Apache behind Nextcloud's `.htaccess`.
+The release archive contains no `.git`, `.github` or `tests` folders, so nothing below is needed for it.
+
+If you deploy a git clone instead (`git clone https://github.com/R1sen18/twofactor_duo.git twofactor_duo`, then `git checkout` the tag of the latest release), note that Nextcloud's own `.htaccess` only blocks folders like `.git` and `tests` at the web root, not inside app folders. This app therefore ships its own `.htaccess`, which returns 404 for its `.git`, `.github` and `tests` folders on Apache. A CI job checks it with a real Apache behind Nextcloud's `.htaccess`.
 
 The file uses only `RedirectMatch`, so it doesn't interfere with Nextcloud's rewrite rules. It needs `AllowOverride All`, which Nextcloud requires anyway.
 
